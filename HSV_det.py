@@ -2,20 +2,20 @@ import numpy as np
 import cv2
 from picamera2 import Picamera2
 from PIL import Image
+from color_range import get_green_limits, get_red_limits
+from camera_motor import MotorControl
+import time
 
-# Funkcja do obliczania limitów HSV dla zielonego koloru (podejście dopasowane do Sprite)
-def get_green_limits():
-    # Precyzyjne wartości dla zielonej puszki Sprite
-    lowerGreen = np.array([35, 130, 100], dtype=np.uint8)  # Zawężony zakres dla zieleni
-    upperGreen = np.array([75, 255, 255], dtype=np.uint8)  # Węższy zakres
-    return lowerGreen, upperGreen
+# Pobranie zakresów kolorów dla zielonego i czerwonego
+lowerGreen, upperGreen = get_green_limits()
+lowerRed, upperRed = get_red_limits()
 
-# Funkcja do obliczania limitów HSV dla czerwonego koloru (Coca-Cola) - zmniejszenie zakresu
-def get_red_limits():
-    # Czerwony kolor w przestrzeni HSV (od prawdziwego czerwonego do intensywnego czerwonego)
-    lowerRed = np.array([170, 120, 100], dtype=np.uint8)  # Granice dolne czerwonego
-    upperRed = np.array([180, 255, 255], dtype=np.uint8)  # Granice górne czerwonego
-    return lowerRed, upperRed
+print("Zielony limit:", lowerGreen, upperGreen)
+print("Czerwony limit:", lowerRed, upperRed)
+
+motor = MotorControl(dir_pin=22, step_pin=23, enable_pin=24)
+motor_activated = False  # Flaga kontrolująca stan silnika
+last_detected_time = None  # Czas ostatniej detekcji puszki
 
 # Inicjalizacja kamery
 picam2 = Picamera2()
@@ -28,12 +28,8 @@ while True:
     # Konwersja obrazu do przestrzeni HSV
     hsvImage = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-    # Dla zielonego koloru (Sprite)
-    lowerGreen, upperGreen = get_green_limits()
+    # Maski kolorów dla zielonego (Sprite) i czerwonego (Coca-Cola)
     maskGreen = cv2.inRange(hsvImage, lowerGreen, upperGreen)
-
-    # Dla czerwonego koloru (Coca-Cola) - od prawdziwego czerwonego
-    lowerRed, upperRed = get_red_limits()
     maskRed = cv2.inRange(hsvImage, lowerRed, upperRed)
 
     # Rozmycie dla wygładzenia wyników i eliminowania szumów
@@ -44,8 +40,8 @@ while True:
     non_zero_pixels_green = np.count_nonzero(maskGreen)
     non_zero_pixels_red = np.count_nonzero(maskRed)
 
-    # Załóżmy, że minimalna liczba pikseli, które muszą być różne od zera, by uznać obiekt za wykryty, to 1000
-    if non_zero_pixels_green > 1000:
+    # Jeśli liczba pikseli zielonego koloru przekroczy próg, oznacza to, że puszka jest wykryta
+    if non_zero_pixels_green > 1200:
         # Wyciąganie konturów dla zielonego koloru
         mask_ = Image.fromarray(maskGreen)
         bbox = mask_.getbbox()
@@ -58,6 +54,22 @@ while True:
             # Wyświetlanie komunikatu w terminalu
             print("Zielona puszka wykryta!")
 
+            # Uruchomienie silnika tylko jeśli jeszcze nie był aktywowany
+            if not motor_activated:
+                motor.rotate_motor(steps=200, direction=True, step_delay=0.001)
+                motor_activated = True  # Ustawienie flagi, żeby nie uruchamiać silnika ponownie
+
+            # Zapamiętanie czasu ostatniego wykrycia puszki
+            last_detected_time = time.time()
+    
+    else:
+        # Jeśli puszka zniknęła, sprawdzamy, czy minęło trochę czasu
+        if motor_activated and last_detected_time is not None:
+            time_since_detection = time.time() - last_detected_time
+            if time_since_detection > 1.3:  # Jeśli minęło więcej niż 1.5 sekundy
+                motor_activated = False  # Resetowanie flagi, żeby silnik mógł uruchomić się przy nowej detekcji
+                print("Puszka zniknęła, oczekiwanie na ponowne wykrycie.")
+    
     if non_zero_pixels_red > 1000:
         # Wyciąganie konturów dla czerwonego koloru
         mask_ = Image.fromarray(maskRed)
@@ -72,7 +84,7 @@ while True:
             print("Czerwona puszka Coca-Cola wykryta!")
 
     # Wyświetlanie obrazu
-    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # Zamiana przestrzeni kolorów na RGB
+    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     cv2.imshow('frame', frame)
 
     # Zakończenie pętli po naciśnięciu 'q'
@@ -81,5 +93,4 @@ while True:
 
 # Zwalnianie zasobów
 cv2.destroyAllWindows()
-
-
+motor.disable_motor()  # Wyłączenie silnika po zakończeniu działania
