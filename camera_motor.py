@@ -27,3 +27,8 @@ class MotorControl:
     def disable_motor(self):
         """Wyłączenie silnika, ustawiając ENABLE na HIGH"""
         self.ENABLE_PIN.on()
+
+    def enable_motor(self):
+        """Wyłączenie silnika, ustawiając ENABLE na HIGH"""
+        self.ENABLE_PIN.off()    
+
